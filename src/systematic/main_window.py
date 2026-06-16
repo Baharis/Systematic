@@ -28,7 +28,7 @@ from pathlib import Path
 
 from image_store import ImageStore
 from image_window import ImageWindow
-from peakfinders import discover_finders
+from peakfinders import discover_peakfinders
 from peakfinders.base import BasePeakFinder
 
 
@@ -36,8 +36,8 @@ class MainWindow:
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("Systematic – Control Panel")
-        self.root.geometry("560x680")
+        self.root.title('Systematic – Control Panel')
+        self.root.geometry('560x680')
         self.root.resizable(True, True)
 
         # Central data store
@@ -48,7 +48,7 @@ class MainWindow:
         self._image_windows: dict[Path, ImageWindow] = {}
 
         # Discover peakfinder plugins
-        self._finders: list[BasePeakFinder] = discover_finders()
+        self._finders: list[BasePeakFinder] = discover_peakfinders()
         if not self._finders:
             messagebox.showerror(
                 "No peakfinders",
@@ -58,25 +58,15 @@ class MainWindow:
 
         self._build_ui()
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
-
     def _build_ui(self) -> None:
         root = self.root
 
         # ── File list ────────────────────────────────────────────────
-        list_frame = tk.LabelFrame(root, text="Loaded Files", padx=6, pady=6)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+        lf = tk.LabelFrame(root, text='Loaded Files', padx=6, pady=6)
+        lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
 
-        sb = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        self._listbox = tk.Listbox(
-            list_frame,
-            yscrollcommand=sb.set,
-            selectmode=tk.EXTENDED,
-            activestyle="dotbox",
-            height=7,
-        )
+        sb = tk.Scrollbar(lf, orient=tk.VERTICAL)
+        self._listbox = tk.Listbox(lf, yscrollcommand=sb.set, selectmode=tk.EXTENDED, activestyle='dotbox', height=5)
         sb.config(command=self._listbox.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self._listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -84,12 +74,12 @@ class MainWindow:
 
         btn_row = tk.Frame(root)
         btn_row.pack(fill=tk.X, padx=10, pady=(0, 4))
-        tk.Button(btn_row, text="Open TIFF(s)…",
-                  command=self._open_files, width=14).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_row, text="Remove Selected",
-                  command=self._remove_selected, width=16).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_row, text="Clear All",
-                  command=self._clear_all, width=10).pack(side=tk.LEFT, padx=2)
+        b = tk.Button(btn_row, text='Open TIFF(s)...', command=self._open_files, width=14)
+        b.pack(side=tk.LEFT, padx=2)
+        b = tk.Button(btn_row, text="Remove Selected", command=self._remove_selected, width=16)
+        b.pack(side=tk.LEFT, padx=2)
+        b = tk.Button(btn_row, text="Clear All", command=self._clear_all, width=10)
+        b.pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(root, orient="horizontal").pack(fill=tk.X, padx=8, pady=2)
 
@@ -99,21 +89,12 @@ class MainWindow:
 
         self._notebook = ttk.Notebook(pf_outer)
         self._notebook.pack(fill=tk.BOTH, expand=True)
-        self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
         for finder in self._finders:
             tab = ttk.Frame(self._notebook, padding=6)
             self._notebook.add(tab, text=finder.NAME)
-
-            # Each finder gets its own LabelFrame inside the tab
-            inner = tk.LabelFrame(
-                tab,
-                text=finder.NAME,
-                padx=6,
-                pady=6,
-            )
-            inner.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-            finder.build_ui(inner)
+            ff = finder.frame(tab)
+            ff.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
         # ── Action buttons ───────────────────────────────────────────
         ttk.Separator(root, orient="horizontal").pack(fill=tk.X, padx=8, pady=4)
@@ -259,13 +240,8 @@ class MainWindow:
     # Tab / peakfinder
     # ------------------------------------------------------------------
 
-    def _on_tab_change(self, _event=None) -> None:
-        finder = self._active_finder()
-        if finder:
-            finder.on_tab_selected()
-
     def _active_finder(self) -> BasePeakFinder | None:
-        idx = self._notebook.index("current")
+        idx = self._notebook.index('current')
         if 0 <= idx < len(self._finders):
             return self._finders[idx]
         return None
@@ -277,13 +253,13 @@ class MainWindow:
     def _run_on_paths(self, paths: list[Path]) -> None:
         finder = self._active_finder()
         if finder is None:
-            messagebox.showinfo("No finder", "No peakfinder tab is active.")
+            messagebox.showinfo('No finder', 'No peakfinder tab is active.')
             return
         if not paths:
-            messagebox.showinfo("No images", "No images to process.")
+            messagebox.showinfo('No images', 'No images to process.')
             return
 
-        self._status_var.set(f"Running [{finder.NAME}] on {len(paths)} image(s)…")
+        self._status_var.set(f"Running [{finder.NAME}] on {len(paths)} image(s)...")
         self.root.update_idletasks()
 
         total = 0
@@ -291,7 +267,7 @@ class MainWindow:
         for path in paths:
             entry = self._store[path]
             try:
-                result = finder.run(entry.raw, path)
+                result = finder.run(entry.raw)
                 self._store.set_result(path, result)   # fires "result" → ImageWindow
                 total += len(result)
             except Exception as exc:

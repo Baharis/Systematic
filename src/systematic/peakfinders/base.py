@@ -6,28 +6,44 @@ Protocol / abstract base class that every peakfinder plugin must satisfy.
 How to add a new peakfinder
 ---------------------------
 1.  Create a new .py file inside the `peakfinders/` directory.
-2.  Define a class that inherits from ``BasePeakFinder``.
-3.  Implement the three required members:
-        NAME        – short display name used for the tab label
-        DESCRIPTION – one-line description shown as a tooltip / subtitle
-        build_ui()  – populate a ttk.LabelFrame with your parameter widgets
-        run()       – read your widgets, run the algorithm, return a PeakResult
+2.  Define a class that has the following interface (inheriting BasePeakFinder
+    is optional but recommended for IDE support and isinstance checks):
 
-The main window discovers peakfinders automatically by scanning this package;
-no registration step is needed.
+        NAME        : str   – short display name used for the tab label
+        DESCRIPTION : str   – one-line description shown as a subtitle
+        VARIABLES   : type  – a dataclass whose fields are tk.*Var instances;
+                              one instance is created as self.var in __init__
+        frame(parent) -> tk.Frame
+                      – build and return a tk.Frame containing all parameter
+                        widgets, wired to self.var
+        run(image)  -> PeakResult
+                      – read self.var, run the algorithm, return a PeakResult
 
-Parameter widget conventions
------------------------------
-Use standard tkinter variables (tk.DoubleVar, tk.IntVar, tk.StringVar).
-Store them as instance attributes so ``run()`` can read them.
-You may use any tkinter/ttk widgets you like inside ``build_ui()``.
+Convention for VARIABLES dataclass
+------------------------------------
+    @dataclass
+    class MyVars:
+        threshold = tk.DoubleVar(value=0.1)
+        min_dist  = tk.IntVar(value=10)
+
+    class MyFinder(BasePeakFinder):
+        VARIABLES = MyVars
+        def __init__(self):
+            self.var = self.VARIABLES()
+
+Access values in run() as:  self.var.threshold.get()
+
+Discovery
+---------
+peakfinders/__init__.py scans this package automatically.  Any class that
+has NAME, frame, and run attributes is picked up — no explicit registration
+needed.  Inheriting BasePeakFinder is not required for discovery.
 """
 
 from __future__ import annotations
 
 import tkinter as tk
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 import numpy as np
 
@@ -36,48 +52,35 @@ from data_model import PeakResult
 
 class BasePeakFinder(ABC):
     """
-    Abstract base class for peakfinder plugins.
+    Optional base class for peakfinder plugins.
 
-    Subclasses must define:
-        NAME        : str            – Short name shown on the notebook tab
-        DESCRIPTION : str            – One-line description shown below the tab
-        build_ui()                   – create parameter widgets in `parent`
-        run()                        – execute algorithm, return PeakResult
+    Inherit from this for IDE autocompletion and abstract-method checking.
+    Discovery does not require inheritance — duck-typing is used instead.
     """
 
     NAME: str = "Unnamed"
     DESCRIPTION: str = ""
 
-    def __init__(self) -> None:
-        # Subclasses should call super().__init__() and then create
-        # tk.*Var instances as instance attributes.
-        pass
-
     @abstractmethod
-    def build_ui(self, parent: tk.Widget) -> None:
+    def frame(self, parent: tk.Widget) -> tk.Frame:
         """
-        Populate `parent` (a ttk.LabelFrame) with parameter widgets.
+        Build parameter widgets and return a tk.Frame.
 
-        `parent` is freshly created for each peakfinder tab;
-        the peakfinder owns it entirely.
+        The frame will be embedded directly into the notebook tab.
+        Wire all widgets to variables stored on self (e.g. self.var.*).
         """
 
     @abstractmethod
-    def run(
-        self,
-        image: np.ndarray,
-        filepath: Path,
-    ) -> PeakResult:
+    def run(self, image: np.ndarray) -> PeakResult:
         """
         Run peak-finding on a single image.
 
         Parameters
         ----------
-        image    : 2-D float64 array, original (un-normalised) pixel values.
-                   Non-negative; may contain zeros.
-        filepath : Path to the source file (for PeakResult metadata).
+        image : 2-D float64 ndarray, original (un-normalised) pixel values,
+                guaranteed non-negative.
 
         Returns
         -------
-        PeakResult
+        PeakResult  – filepath and finder_name are filled in by the caller.
         """
