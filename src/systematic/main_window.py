@@ -61,7 +61,7 @@ class MainWindow:
         b = tk.Button(btn_row, text="Clear All", command=self._clear_all, width=10)
         b.pack(side=tk.LEFT, padx=2)
 
-        ttk.Separator(root, orient="horizontal").pack(fill=tk.X, padx=8, pady=2)
+        ttk.Separator(root, orient='horizontal').pack(fill=tk.X, padx=8, pady=2)
 
         # ── Peakfinder notebook ──────────────────────────────────────
         pf_outer = tk.LabelFrame(root, text="Peak Finder", padx=6, pady=6)
@@ -76,8 +76,48 @@ class MainWindow:
             ff = finder.frame(tab)
             ff.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
+        # ── Filtering tools ───────────────────────────────────────────
+
+        ttk.Separator(root, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
+
+        uc_frame = tk.Frame(root)
+        uc_frame.pack(fill=tk.X, padx=10, pady=4)
+
+        self.uc_a = tk.DoubleVar(value=5.0)
+        self.uc_b = tk.DoubleVar(value=5.0)
+        self.uc_c = tk.DoubleVar(value=5.0)
+        self.uc_al = tk.DoubleVar(value=90.0)
+        self.uc_be = tk.DoubleVar(value=90.0)
+        self.uc_ga = tk.DoubleVar(value=90.0)
+        self.uc_ct = tk.StringVar(value='P')
+        self.a_per_pixel = tk.DoubleVar(value=0.01)
+        self.hca_threshold = tk.DoubleVar(value=0.01)
+
+        for i in range(8):
+            uc_frame.grid_columnconfigure(i, weight=1)
+
+        ttk.Label(uc_frame, text='a [Å]:', anchor='w').grid(row=0, column=0, sticky='w')
+        ttk.Label(uc_frame, text='b [Å]:', anchor='w').grid(row=0, column=2, sticky='w')
+        ttk.Label(uc_frame, text='c [Å]:', anchor='w').grid(row=0, column=4, sticky='w')
+        ttk.Label(uc_frame, text='α [°]:', anchor='w').grid(row=1, column=0, sticky='w')
+        ttk.Label(uc_frame, text='β [°]:', anchor='w').grid(row=1, column=2, sticky='w')
+        ttk.Label(uc_frame, text='γ [°]:', anchor='w').grid(row=1, column=4, sticky='w')
+        ttk.Label(uc_frame, text='Centering:', anchor='w').grid(row=2, column=0, sticky='w')
+        ttk.Label(uc_frame, text='Å-1 per pixel:', anchor='w').grid(row=2, column=2, sticky='w')
+        ttk.Label(uc_frame, text='HCA threshold:', anchor='w').grid(row=2, column=4, sticky='w')
+
+        ttk.Entry(uc_frame, textvariable=self.uc_a, width=5).grid(row=0, column=1)
+        ttk.Entry(uc_frame, textvariable=self.uc_b, width=5).grid(row=0, column=3)
+        ttk.Entry(uc_frame, textvariable=self.uc_c, width=5).grid(row=0, column=5)
+        ttk.Entry(uc_frame, textvariable=self.uc_al, width=5).grid(row=1, column=1)
+        ttk.Entry(uc_frame, textvariable=self.uc_be, width=5).grid(row=1, column=3)
+        ttk.Entry(uc_frame, textvariable=self.uc_ga, width=5).grid(row=1, column=5)
+        ttk.Entry(uc_frame, textvariable=self.uc_ct, width=5).grid(row=2, column=1)
+        ttk.Entry(uc_frame, textvariable=self.a_per_pixel, width=5).grid(row=2, column=3)
+        ttk.Entry(uc_frame, textvariable=self.hca_threshold, width=5).grid(row=2, column=5)
+
         # ── Action buttons ───────────────────────────────────────────
-        ttk.Separator(root, orient="horizontal").pack(fill=tk.X, padx=8, pady=4)
+        ttk.Separator(root, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
 
         action_frame = tk.Frame(root)
         action_frame.pack(fill=tk.X, padx=10, pady=4)
@@ -104,6 +144,14 @@ class MainWindow:
             pady=4,
         ).pack(side=tk.LEFT, padx=6)
 
+        tk.Button(
+            action_frame,
+            text='Cluster peaks',
+            command=self._cluster_peaks,
+            padx=6,
+            pady=4,
+        ).pack(side=tk.LEFT, padx=6)
+
         # ── Status bar ───────────────────────────────────────────────
         self._status_var = tk.StringVar(value="Ready. Open TIFF files to begin.")
         tk.Label(
@@ -114,6 +162,8 @@ class MainWindow:
             bd=1,
             pady=3,
         ).pack(side=tk.BOTTOM, fill=tk.X)
+
+
 
     # ------------------------------------------------------------------
     # File management
