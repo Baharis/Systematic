@@ -43,8 +43,8 @@ class PeakFinder8Finder(BasePeakFinder):
         rows = [
             ('Count threshold',         'adc_thresh',       1,  100, 1, '{:.0f}'),
             ('Min sigma-to-noise',      'min_snr',          1,  100, 1, '{:.0f}'),
-            ('Minimum pixel count',     'min_pix_count',    1,  1e6, 1, '{:.0f}'),
-            ('Maximum pixel count',     'max_pix_count',    1,  1e6, 1, '{:.0f}'),
+            ('Minimum pixel count',     'min_pix_count',    1,  1e4, 1, '{:.0f}'),
+            ('Maximum pixel count',     'max_pix_count',    1,  1e4, 1, '{:.0f}'),
             ('Local background radius', 'local_bg_radius',  1,  100, 1, '{:.0f}'),
         ]
 

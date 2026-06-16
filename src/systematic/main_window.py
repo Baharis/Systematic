@@ -1,24 +1,4 @@
-"""
-main_window.py
-==============
-Window 1 – control panel.
-
-Layout
-------
-┌──────────────────────────────────────┐
-│  Loaded Files                        │
-│  [listbox]           [Open] [Remove] │
-├──────────────────────────────────────┤
-│  Peak Finder  ┌──────┬──────┬──────┐ │
-│               │ Tab1 │ Tab2 │ ...  │ │
-│               └──────┴──────┴──────┘ │
-│               [parameter widgets]    │
-├──────────────────────────────────────┤
-│  [▶ Run All]  [Run Selected]         │
-├──────────────────────────────────────┤
-│  status bar                          │
-└──────────────────────────────────────┘
-"""
+"""The main display window with image list, peak-finding & filtering details"""
 
 from __future__ import annotations
 
@@ -177,7 +157,7 @@ class MainWindow:
 
     def _on_store_event(self, path: Path | None, event: str) -> None:
         """Sync listbox with the store; open/close image windows as needed."""
-        if event == "loaded" and path is not None:
+        if event == 'loaded' and path is not None:
             self._listbox.insert(tk.END, path.name)
             win = ImageWindow(
                 parent=self.root,
@@ -187,17 +167,15 @@ class MainWindow:
             )
             self._image_windows[path] = win
 
-        elif event == "removed" and path is not None:
+        elif event == 'removed' and path is not None:
             self._close_image_window(path)
             self._sync_listbox()
 
-        elif event == "cleared":
+        elif event == 'cleared':
             for p in list(self._image_windows.keys()):
                 self._close_image_window(p)
             self._listbox.delete(0, tk.END)
-            self._status_var.set("All files cleared.")
-
-        # "result" events are handled by ImageWindow directly
+            self._status_var.set('All files cleared.')
 
     def _sync_listbox(self) -> None:
         self._listbox.delete(0, tk.END)

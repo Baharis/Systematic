@@ -44,20 +44,9 @@ class ImageEntry:
 # ---------------------------------------------------------------------------
 
 class ImageStore:
-    """
-    Thread-safe-ish (single-threaded Tkinter app) central data registry.
-
-    Usage
-    -----
-    store = ImageStore()
-    store.add_listener(my_callback)   # called whenever data changes
-    store.load(path)                  # load a TIFF
-    store.set_result(path, result)    # save peak-finding output
-    entry = store[path]               # retrieve an entry
-    """
+    """Thread-safe central loaded diffraction data registry."""
 
     def __init__(self) -> None:
-        # Ordered dict so the listbox order matches insertion order
         self._entries: dict[Path, ImageEntry] = {}
         self._listeners: list[Callable[[Path, str], None]] = []
 
@@ -81,77 +70,48 @@ class ImageStore:
         self._listeners = [l for l in self._listeners if l is not cb]
 
     def _notify(self, path: Path | None, event: str) -> None:
+        """Notify the listener ov en event concerning "path"-indexed image."""
         for cb in self._listeners:
             try:
                 cb(path, event)
             except Exception as exc:
-                print(f"[ImageStore] listener error: {exc}")
-
-    # ------------------------------------------------------------------
-    # Loading
-    # ------------------------------------------------------------------
+                print(f'[ImageStore] listener error: {exc}')
 
     def load(self, path: Path) -> ImageEntry:
-        """
-        Load a TIFF (or any PIL-readable format) and store its raw data.
-
-        The array is kept as float64 in original units (ADU, counts, …).
-        No normalisation is applied here — display code uses log1p separately.
-
-        Raises
-        ------
-        FileNotFoundError, OSError, ValueError on bad files.
-        """
+        """Load a TIFF (or any PIL-readable format) and store its raw data."""
         if path in self._entries:
             return self._entries[path]
 
         with Image.open(path) as img:
-            arr = np.array(img, dtype=np.float64)
+            arr = np.array(img, dtype=np.int64)
 
-        if arr.ndim == 3:
-            # Multi-channel: collapse to luminance
-            arr = arr.mean(axis=2)
         if arr.ndim != 2:
-            raise ValueError(
-                f"Expected a 2-D image, got shape {arr.shape} from {path.name}"
-            )
+            msg = f'Expected a 2D image, got {arr.shape=} from {path.name=}'
+            raise ValueError(msg)
 
-        # Ensure non-negative (some detectors encode with offsets)
-        if arr.min() < 0:
+        if arr.min() < 0:  # Ensure non-negative (some detectors encode with offsets)
             arr -= arr.min()
 
         entry = ImageEntry(filepath=path, raw=arr)
         self._entries[path] = entry
-        self._notify(path, "loaded")
+        self._notify(path, 'loaded')
         return entry
-
-    # ------------------------------------------------------------------
-    # Results
-    # ------------------------------------------------------------------
 
     def set_result(self, path: Path, result: PeakResult) -> None:
         """Store peak-finding output for a given image."""
         if path not in self._entries:
-            raise KeyError(f"{path} is not loaded in the store.")
+            raise KeyError(f'{path} is not loaded in the store.')
         self._entries[path].result = result
-        self._notify(path, "result")
-
-    # ------------------------------------------------------------------
-    # Removal
-    # ------------------------------------------------------------------
+        self._notify(path, 'result')
 
     def remove(self, path: Path) -> None:
         if path in self._entries:
             del self._entries[path]
-            self._notify(path, "removed")
+            self._notify(path, 'removed')
 
     def clear(self) -> None:
         self._entries.clear()
-        self._notify(None, "cleared")
-
-    # ------------------------------------------------------------------
-    # Access
-    # ------------------------------------------------------------------
+        self._notify(None, 'cleared')
 
     def __contains__(self, path: Path) -> bool:
         return path in self._entries
