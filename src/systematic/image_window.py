@@ -143,7 +143,7 @@ class ImageWindow:
             ev = self._eval
             if ev is not None and len(ev.pairs) > 0:
                 self._draw_eval_lines(ax, rows, cols, ev)
-                self._draw_score_annotation(ax, raw.shape, ev.score)
+                self._draw_score_annotation(ax, raw.shape, ev.powder_deviation)
 
             ax.legend(
                 loc='upper right',
@@ -164,7 +164,7 @@ class ImageWindow:
 
         h, w   = raw.shape
         finder = result.finder_name if result else '—'
-        score_str = f'  |  score: {self._eval.score:.3f}' if self._eval else ''
+        score_str = f'  |  score: {self._eval.powder_deviation:.3f}' if self._eval else ''
         self._status_var.set(
             f'{w}×{h} px  |  peaks: {n_peaks}  |  finder: {finder}{score_str}'
         )

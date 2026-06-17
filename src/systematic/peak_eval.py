@@ -45,9 +45,11 @@ Public API
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
+import matplotlib as mpl
 import numpy as np
+from scipy.spatial import KDTree
 
 
 # ---------------------------------------------------------------------------
@@ -61,38 +63,44 @@ class PairwiseEval:
 
     Attributes
     ----------
-    score : float
-        Scalar match quality in [0, 1].  Higher is better.
+    powder_deviation : float
+        Mean deviation of nearest peaks from powder distances. Larger = worse.
+    angle_entropy: float
+        Entropy of kde-azimuthal entropy of pairs' versor angle distribution.
     pairs : ndarray of shape (M, 2), dtype int
-        Indices into the peak array: pairs[k] = (i, j) means the k-th pair
-        connects peak i and peak j.
-    obs_inv_d : ndarray of shape (M,)
+        Neighbor graph: pairs[k] = (i, j) means k-th pair connects peaks i & j.
+    obs_d_star : ndarray of shape (M,)
         Observed inter-peak distance for each pair, in Å⁻¹.
-    nearest_inv_d : ndarray of shape (M,)
-        Nearest allowed powder-line spacing for each pair, in Å⁻¹.
-    rel_errors : ndarray of shape (M,)
-        Fractional deviation |obs - nearest| / nearest for each pair.
+    powder_deviations : ndarray of shape (M,)
+        Deviation off powder |obs - nearest| / |near2 - near1| for each pair.
     colors : ndarray of shape (M, 4)
-        RGBA colours (float32, values in [0, 1]) for drawing each pair.
-        Green → good match, yellow → moderate, red → bad match.
-    n_peaks : int
-        Number of peaks in the image.
+        RGBA colours for drawing each pair; Green → good, red → bad match.
     """
 
-    score:         float
-    pairs:         np.ndarray       # (M, 2) int
-    obs_inv_d:     np.ndarray       # (M,) float
-    nearest_inv_d: np.ndarray       # (M,) float
-    rel_errors:    np.ndarray       # (M,) float
-    colors:        np.ndarray       # (M, 4) float32
-    n_peaks:       int
+    powder_deviation:  float
+    angle_entropy:     float
+    pairs:             np.ndarray       # (M, 2) int
+    #obs_d_star:        np.ndarray       # (M,) float
+    #powder_deviations: np.ndarray       # (M,) float
+    colors:            np.ndarray       # (M, 4) float32
+
+    @classmethod
+    def void(cls) -> PairwiseEval:
+        return cls(
+            powder_deviation = 0.0,
+            angle_entropy = 0,
+            pairs = np.empty((0, 2), dtype=int),
+            #obs_d_star = np.empty(0),
+            #powder_deviations = np.empty(0),
+            colors = np.empty((0, 4), dtype=np.float32),
+        )
 
 
 # ---------------------------------------------------------------------------
 # Colour helper
 # ---------------------------------------------------------------------------
 
-def _error_to_rgba(rel_errors: np.ndarray) -> np.ndarray:
+def _powder_deviations_to_rgba(deviations: np.ndarray) -> np.ndarray:
     """
     Map fractional errors in [0, 1] to RGBA colours.
 
@@ -105,30 +113,16 @@ def _error_to_rgba(rel_errors: np.ndarray) -> np.ndarray:
 
     Parameters
     ----------
-    rel_errors : (M,) array of floats, clipped to [0, 1]
+    deviations : (M,) array of floats, clipped to [0, 1]
 
     Returns
     -------
     rgba : (M, 4) float32 array
     """
-    e = np.clip(rel_errors, 0.0, 1.0).astype(np.float32)
-    rgba = np.zeros((len(e), 4), dtype=np.float32)
-    rgba[:, 3] = 1.0                        # alpha always 1
 
-    # Green → yellow for e in [0, 0.5]: R rises 0→1, G stays 0.8→1
-    low = e <= 0.5
-    t = e[low] * 2.0                        # 0 → 1 over [0, 0.5]
-    rgba[low, 0] = t                        # R: 0 → 1
-    rgba[low, 1] = 0.8 + 0.2 * t           # G: 0.8 → 1.0
-    rgba[low, 2] = 0.0
-
-    # Yellow → red for e in [0.5, 1.0]: R stays 1, G falls 1→0
-    high = ~low
-    t = (e[high] - 0.5) * 2.0              # 0 → 1 over [0.5, 1.0]
-    rgba[high, 0] = 1.0
-    rgba[high, 1] = 1.0 - t                # G: 1 → 0
-    rgba[high, 2] = 0.0
-
+    e = np.clip(deviations, 0.0, 1.0).astype(np.float32)
+    cmap = mpl.colormaps['Spectral_r']
+    rgba = cmap(e)
     return rgba
 
 
@@ -221,10 +215,11 @@ def evaluate_image(
     cols: np.ndarray,
     powder_inv_d: np.ndarray,
     angstrom_per_pixel: float,
-    k_neighbours: int = 4,
+    k_neighbours: int = 6,
 ) -> PairwiseEval:
     """
-    Evaluate how well inter-peak distances match the supplied powder pattern.
+    Evaluate how well nearest inter-peak distances match the supplied powder
+    pattern and how low is the entropy of nearest inter-peak angle distribution.
 
     Parameters
     ----------
@@ -247,124 +242,57 @@ def evaluate_image(
         with empty arrays.
     """
     n = len(rows)
-
-    if n < 2 or len(powder_inv_d) == 0 or angstrom_per_pixel <= 0:
-        return PairwiseEval(
-            score=0.0,
-            pairs=np.empty((0, 2), dtype=int),
-            obs_inv_d=np.empty(0),
-            nearest_inv_d=np.empty(0),
-            rel_errors=np.empty(0),
-            colors=np.empty((0, 4), dtype=np.float32),
-            n_peaks=n,
-        )
-
     lines = np.asarray(powder_inv_d, dtype=np.float64)
-    lines = lines[lines > 0]
-    if len(lines) == 0:
-        return PairwiseEval(
-            score=0.0,
-            pairs=np.empty((0, 2), dtype=int),
-            obs_inv_d=np.empty(0),
-            nearest_inv_d=np.empty(0),
-            rel_errors=np.empty(0),
-            colors=np.empty((0, 4), dtype=np.float32),
-            n_peaks=n,
-        )
+    lines = lines[lines >= 0]
 
-    # ── All pairwise distances (for the score) ────────────────────────────
-    # Vectorised: build upper-triangle index arrays
-    ii, jj = np.triu_indices(n, k=1)           # all unique pairs
-    dr = rows[ii] - rows[jj]
-    dc = cols[ii] - cols[jj]
-    d_px = np.hypot(dr, dc)
+    if n < 2 or len(powder_inv_d) == 0 or angstrom_per_pixel <= 0 or len(lines) == 0:
+        return PairwiseEval.void()
 
-    # Convert to Å⁻¹
-    obs = d_px * angstrom_per_pixel             # (M,) Å⁻¹
-    valid = obs > 1e-9
-    obs_valid   = obs[valid]
-    ii_valid    = ii[valid]
-    jj_valid    = jj[valid]
+    rc = np.column_stack([rows, cols])
+    near_pairs = []
+    dd_px, jj = KDTree(rc).query(rc, k=k_neighbours + 1)
+    for i, (di_px, ji) in enumerate(zip(dd_px, jj)):
+        for d_px, j in zip(di_px, ji):
+            pair = (min(i, int(j)), max(i, int(j)))
+            if i != j and pair not in near_pairs:
+                near_pairs.append(pair)
 
-    if len(obs_valid) == 0:
-        return PairwiseEval(
-            score=0.0,
-            pairs=np.empty((0, 2), dtype=int),
-            obs_inv_d=np.empty(0),
-            nearest_inv_d=np.empty(0),
-            rel_errors=np.empty(0),
-            colors=np.empty((0, 4), dtype=np.float32),
-            n_peaks=n,
-        )
-
-    # Nearest powder line for every pair — shape (M, L) → argmin over L
-    diff = np.abs(obs_valid[:, None] - lines[None, :])   # (M, L)
-    nearest_idx  = np.argmin(diff, axis=1)               # (M,)
-    nearest_val  = lines[nearest_idx]                    # (M,)
-    rel_errors_all = np.abs(obs_valid - nearest_val) / nearest_val
-
-    # ── Score: median match quality over ALL pairs ───────────────────────
-    score = float(np.median(1.0 - np.clip(rel_errors_all, 0.0, 1.0)))
-
-    # ── Nearest-neighbour pairs (for drawing) ────────────────────────────
-    draw_pairs = _nearest_neighbour_pairs(rows, cols, k_neighbours)  # (K, 2)
-
-    if len(draw_pairs) == 0:
-        return PairwiseEval(
-            score=score,
-            pairs=draw_pairs,
-            obs_inv_d=np.empty(0),
-            nearest_inv_d=np.empty(0),
-            rel_errors=np.empty(0),
-            colors=np.empty((0, 4), dtype=np.float32),
-            n_peaks=n,
-        )
-
-    # Re-compute per-pair quantities for the drawing subset
-    di_draw = draw_pairs[:, 0]
-    dj_draw = draw_pairs[:, 1]
-    dr2  = rows[di_draw] - rows[dj_draw]
-    dc2  = cols[di_draw] - cols[dj_draw]
-    d_px2 = np.hypot(dr2, dc2)
-    obs_draw = d_px2 * angstrom_per_pixel
-
-    valid2 = obs_draw > 1e-9
-    obs_draw_v     = obs_draw[valid2]
-    draw_pairs_v   = draw_pairs[valid2]
-
-    nearest_idx2  = np.argmin(np.abs(obs_draw_v[:, None] - lines[None, :]), axis=1)
-    nearest_val2  = lines[nearest_idx2]
-    rel_err2      = np.abs(obs_draw_v - nearest_val2) / nearest_val2
-
-    colors = _error_to_rgba(rel_err2)
-
-    # Calculate rotational entropy of nearest (draw) peaks
-    from scipy.stats import entropy
+    near_pairs = np.asarray(near_pairs, dtype=int)
+    ii = near_pairs[:, 0]
+    jj = near_pairs[:, 1]
+    dr2  = rows[ii] - rows[jj]
+    dc2  = cols[ii] - cols[jj]
+    d_px = np.hypot(dr2, dc2)
+    d_astar = d_px * angstrom_per_pixel
     angles = np.mod(np.arctan2(dc2, dr2), np.pi)
-    print(angles)
-    print(len(angles))
-    angle_hist, _ = np.histogram(angles, bins=len(angles), range=(0, np.pi))
-    print(angle_hist)
-    print(len(angle_hist))
-    angle_entropy = entropy(angle_hist)
-    print(angle_entropy)
 
-    from matplotlib import pyplot as plt
+    print(lines)
+    print(d_astar)
+    print(max(d_astar))
+    print(max(d_astar))
+
+    if len(d_astar) == 0:
+        return PairwiseEval.void()
+
+    # Nearest smaller and larger powder line for every pair
+    idx = np.searchsorted(lines, d_astar, side='left')
+    upper_line = lines[np.clip(idx, 0, len(lines) - 1)]
+    lower_line = lines[np.clip(idx - 1, 0, len(lines) - 1)]
+    max_dev = 0.5 * np.max(np.diff(lines))
+
+    abs_dev = np.min(np.abs([upper_line - d_astar, lower_line - d_astar]), axis=0)
+    powder_deviation = abs_dev / max_dev
+    colors = _powder_deviations_to_rgba(powder_deviation)
 
     # Calculate circular KDE
     theta, density = circular_kde(angles, kappa=1000)
-    plt.plot(density)
-    plt.show()
     kde_entropy = -np.sum(density * np.log(density + 1e-12))
     kde_entropy /= np.log(len(density))
     print(kde_entropy)
 
     return PairwiseEval(
-        score=score,
-        pairs=draw_pairs_v,
-        obs_inv_d=obs_draw_v,
-        nearest_inv_d=nearest_val2,
-        rel_errors=rel_err2,
+        powder_deviation=float(np.mean(powder_deviation)),
+        angle_entropy=kde_entropy,
+        pairs=near_pairs,
         colors=colors,
-        n_peaks=n,
     )

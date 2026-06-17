@@ -455,7 +455,7 @@ class MainWindow:
             if win:
                 win.update_eval(ev)
 
-            scores.append(ev.score)
+            scores.append(ev.powder_deviation)
             n_evaluated += 1
 
         # ── 4. Status summary ─────────────────────────────────────────
