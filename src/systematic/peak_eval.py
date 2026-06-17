@@ -169,6 +169,49 @@ def _nearest_neighbour_pairs(
     return pairs
 
 
+import numpy as np
+from scipy.stats import vonmises
+
+def circular_kde(
+    angles: np.ndarray,
+    n_grid: int = 360,
+    kappa: float = 10.0,
+):
+    """
+    KDE for angles in [0, pi).
+
+    Parameters
+    ----------
+    angles
+        Angles in radians in [0, pi).
+    n_grid
+        Number of evaluation points.
+    kappa
+        Concentration parameter.
+        Larger = narrower peaks.
+
+    Returns
+    -------
+    theta : (n_grid,)
+        Evaluation points.
+    density : (n_grid,)
+        Normalized density.
+    """
+    theta = np.linspace(0, np.pi, n_grid, endpoint=False)
+
+    density = np.zeros_like(theta)
+
+    # Double angles to handle pi-periodicity
+    angles2 = 2 * angles
+    theta2 = 2 * theta
+
+    for a in angles2:
+        density += vonmises.pdf(theta2, kappa, loc=a)
+
+    density /= density.sum()
+
+    return theta, density
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -178,7 +221,7 @@ def evaluate_image(
     cols: np.ndarray,
     powder_inv_d: np.ndarray,
     angstrom_per_pixel: float,
-    k_neighbours: int = 6,
+    k_neighbours: int = 4,
 ) -> PairwiseEval:
     """
     Evaluate how well inter-peak distances match the supplied powder pattern.
@@ -294,6 +337,27 @@ def evaluate_image(
     rel_err2      = np.abs(obs_draw_v - nearest_val2) / nearest_val2
 
     colors = _error_to_rgba(rel_err2)
+
+    # Calculate rotational entropy of nearest (draw) peaks
+    from scipy.stats import entropy
+    angles = np.mod(np.arctan2(dc2, dr2), np.pi)
+    print(angles)
+    print(len(angles))
+    angle_hist, _ = np.histogram(angles, bins=len(angles), range=(0, np.pi))
+    print(angle_hist)
+    print(len(angle_hist))
+    angle_entropy = entropy(angle_hist)
+    print(angle_entropy)
+
+    from matplotlib import pyplot as plt
+
+    # Calculate circular KDE
+    theta, density = circular_kde(angles, kappa=1000)
+    plt.plot(density)
+    plt.show()
+    kde_entropy = -np.sum(density * np.log(density + 1e-12))
+    kde_entropy /= np.log(len(density))
+    print(kde_entropy)
 
     return PairwiseEval(
         score=score,
