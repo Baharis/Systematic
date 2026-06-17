@@ -266,11 +266,6 @@ def evaluate_image(
     d_astar = d_px * angstrom_per_pixel
     angles = np.mod(np.arctan2(dc2, dr2), np.pi)
 
-    print(lines)
-    print(d_astar)
-    print(max(d_astar))
-    print(max(d_astar))
-
     if len(d_astar) == 0:
         return PairwiseEval.void()
 
@@ -288,7 +283,6 @@ def evaluate_image(
     theta, density = circular_kde(angles, kappa=1000)
     kde_entropy = -np.sum(density * np.log(density + 1e-12))
     kde_entropy /= np.log(len(density))
-    print(kde_entropy)
 
     return PairwiseEval(
         powder_deviation=float(np.mean(powder_deviation)),

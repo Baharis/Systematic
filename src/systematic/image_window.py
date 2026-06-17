@@ -143,7 +143,7 @@ class ImageWindow:
             ev = self._eval
             if ev is not None and len(ev.pairs) > 0:
                 self._draw_eval_lines(ax, rows, cols, ev)
-                self._draw_score_annotation(ax, raw.shape, ev.powder_deviation)
+                self._draw_score_annotation(ax, raw.shape, ev)
 
             ax.legend(
                 loc='upper right',
@@ -202,7 +202,7 @@ class ImageWindow:
         self,
         ax,
         image_shape: tuple[int, int],
-        score: float,
+        ev: PairwiseEval,
     ) -> None:
         """
         Print the match score in the bottom-right corner of the image axes.
@@ -211,30 +211,17 @@ class ImageWindow:
         red (score=0) to match the line colours.
         """
         # Interpolate colour: red at 0, yellow at 0.5, green at 1
-        s = float(np.clip(score, 0.0, 1.0))
-        if s >= 0.5:
-            t = (s - 0.5) * 2.0
-            text_color = (1.0 - t, 1.0, 0.0)       # yellow → green
-        else:
-            t = s * 2.0
-            text_color = (1.0, t, 0.0)              # red → yellow
+        s = float(ev.powder_deviation)
+        e = float(ev.angle_entropy)
+        text_color = np.mean(ev.colors, axis=0)
 
         h, w = image_shape
-        ax.text(
-            w - 6, h - 6,
-            f'score: {score:.3f}',
-            ha='right', va='bottom',
-            fontsize=10,
-            fontweight='bold',
-            color=text_color,
-            zorder=10,
-            bbox=dict(
-                boxstyle='round,pad=0.25',
-                facecolor='#1a1a1a',
-                edgecolor='none',
-                alpha=0.65,
-            ),
-        )
+
+        bb = dict(boxstyle='round,pad=0.25', facecolor='#1a1a1a', edgecolor='none', alpha=0.65)
+        t = dict(ha='right', va='bottom', fontsize=10, fontweight='bold', zorder=10)
+        ax.text(w - 6, h - 26, f'entropy: {e:.3f}', **t, color='white', bbox=bb)
+        ax.text(w - 6, h - 6, f'mean offset: {s:.3f}', **t, color=text_color, bbox=bb)
+
 
     # ------------------------------------------------------------------
     # Public interface
