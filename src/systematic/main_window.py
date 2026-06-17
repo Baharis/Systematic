@@ -6,10 +6,14 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
+import numpy as np
+
 from image_store import ImageStore
 from image_window import ImageWindow
 from peakfinders import discover_peakfinders
 from peakfinders.base import BasePeakFinder
+from powder import LatticeParameters, powder_lines
+from peak_eval import evaluate_image
 
 
 class MainWindow:
@@ -91,7 +95,7 @@ class MainWindow:
         self.uc_ga = tk.DoubleVar(value=90.0)
         self.uc_ct = tk.StringVar(value='P')
         self.a_per_pixel = tk.DoubleVar(value=0.01)
-        self.hca_threshold = tk.DoubleVar(value=0.01)
+        # self.hca_threshold = tk.DoubleVar(value=0.01)
 
         for i in range(8):
             uc_frame.grid_columnconfigure(i, weight=1)
@@ -104,7 +108,7 @@ class MainWindow:
         ttk.Label(uc_frame, text='γ [°]:', anchor='w').grid(row=1, column=4, sticky='w')
         ttk.Label(uc_frame, text='Centering:', anchor='w').grid(row=2, column=0, sticky='w')
         ttk.Label(uc_frame, text='Å-1 per pixel:', anchor='w').grid(row=2, column=2, sticky='w')
-        ttk.Label(uc_frame, text='HCA threshold:', anchor='w').grid(row=2, column=4, sticky='w')
+        # ttk.Label(uc_frame, text='HCA threshold:', anchor='w').grid(row=2, column=4, sticky='w')
 
         ttk.Entry(uc_frame, textvariable=self.uc_a, width=5).grid(row=0, column=1)
         ttk.Entry(uc_frame, textvariable=self.uc_b, width=5).grid(row=0, column=3)
@@ -114,7 +118,10 @@ class MainWindow:
         ttk.Entry(uc_frame, textvariable=self.uc_ga, width=5).grid(row=1, column=5)
         ttk.Entry(uc_frame, textvariable=self.uc_ct, width=5).grid(row=2, column=1)
         ttk.Entry(uc_frame, textvariable=self.a_per_pixel, width=5).grid(row=2, column=3)
-        ttk.Entry(uc_frame, textvariable=self.hca_threshold, width=5).grid(row=2, column=5)
+        # ttk.Entry(uc_frame, textvariable=self.hca_threshold, width=5).grid(row=2, column=5)
+
+        b = tk.Button(uc_frame, text='Load CIF...', command=self._load_cif, width=10)
+        b.grid(row=2, column=4, columnspan=2, sticky='ew', padx=2, pady=2)
 
         # ── Action buttons ───────────────────────────────────────────
         ttk.Separator(root, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
@@ -146,8 +153,8 @@ class MainWindow:
 
         tk.Button(
             action_frame,
-            text='Cluster peaks',
-            command=self._cluster_peaks,
+            text='Evaluate diffraction',
+            command=self._eval_diffraction,
             padx=6,
             pady=4,
         ).pack(side=tk.LEFT, padx=6)
@@ -321,6 +328,151 @@ class MainWindow:
         paths = self._store.paths()
         selected = [paths[i] for i in indices if i < len(paths)]
         self._run_on_paths(selected)
+
+    # ------------------------------------------------------------------
+    # Diffraction evaluation
+    # ------------------------------------------------------------------
+
+    def _load_cif(self) -> None:
+        """Open a CIF file and populate the unit-cell entry fields from it."""
+        path = filedialog.askopenfilename(
+            title='Open CIF file',
+            filetypes=[('CIF files', '*.cif'), ('All files', '*.*')],
+        )
+        if not path:
+            return
+        try:
+            lp = LatticeParameters.from_cif(path)
+        except Exception as exc:
+            messagebox.showerror('CIF load error', f'Could not read {Path(path).name}:\n{exc}')
+            return
+
+        self.uc_a.set(round(lp.a, 5))
+        self.uc_b.set(round(lp.b, 5))
+        self.uc_c.set(round(lp.c, 5))
+        self.uc_al.set(round(lp.alpha, 4))
+        self.uc_be.set(round(lp.beta,  4))
+        self.uc_ga.set(round(lp.gamma, 4))
+        self.uc_ct.set(lp.centering)
+
+        self._status_var.set(
+            f'CIF loaded: a={lp.a:.4f} b={lp.b:.4f} c={lp.c:.4f}  '
+            f'α={lp.alpha:.2f} β={lp.beta:.2f} γ={lp.gamma:.2f}  '
+            f'centering={lp.centering}'
+        )
+
+    def _read_lattice_params(self) -> LatticeParameters | None:
+        """Read cell parameters and centering from the GUI; return None on error."""
+        try:
+            lp = LatticeParameters(
+                a=self.uc_a.get(),
+                b=self.uc_b.get(),
+                c=self.uc_c.get(),
+                alpha=self.uc_al.get(),
+                beta=self.uc_be.get(),
+                gamma=self.uc_ga.get(),
+                centering=self.uc_ct.get().strip(),
+            )
+        except Exception as exc:
+            messagebox.showerror('Invalid unit cell', str(exc))
+            return None
+        return lp
+
+    def _eval_diffraction(self) -> None:
+        """
+        For every open image that has a peak result:
+
+        1. Compute the powder pattern from the GUI unit-cell fields.
+        2. Compute pairwise peak distances and match them to powder lines.
+        3. Push a PairwiseEval to each ImageWindow so it can draw the
+           colour-coded distance overlay and the score annotation.
+        4. Report a summary in the status bar.
+        """
+        if not self._store.paths():
+            messagebox.showinfo('No images', 'Open at least one TIFF first.')
+            return
+
+        # ── 1. Build lattice params from GUI ─────────────────────────
+        lp = self._read_lattice_params()
+        if lp is None:
+            return
+
+        app = self.a_per_pixel.get()
+        if app <= 0:
+            messagebox.showerror('Invalid calibration', 'Å-1/pixel must be positive.')
+            return
+
+        # ── 2. Compute powder lines ───────────────────────────────────
+        # s_max covers the largest inter-peak distance observable on the
+        # biggest loaded image; 5% headroom avoids clipping edge cases.
+        try:
+            max_diag_px = max(
+                (float(np.hypot(*self._store[p].raw.shape)) for p in self._store.paths()),
+                default=1024.0,
+            )
+        except Exception:
+            max_diag_px = 1024.0
+
+        s_max = max_diag_px * app * 1.05
+
+        try:
+            lines = powder_lines(lp, s_max=s_max)
+        except Exception as exc:
+            messagebox.showerror('Powder pattern error', str(exc))
+            return
+
+        if len(lines) == 0:
+            messagebox.showwarning(
+                'No powder lines',
+                f'No reflections found for the given cell up to s_max={s_max:.3f} Å-1.\n'
+                'Check your unit-cell parameters and Å-1/px calibration.',
+            )
+            return
+
+        # ── 3. Evaluate each image ────────────────────────────────────
+        self._status_var.set('Evaluating...')
+        self.root.update_idletasks()
+
+        scores = []
+        n_evaluated = 0
+        for path in self._store.paths():
+            result = self._store.get_result(path)
+            win    = self._image_windows.get(path)
+
+            if result is None or len(result) < 2:
+                # No peaks yet — clear any previous overlay
+                if win:
+                    win.clear_eval()
+                continue
+
+            ev = evaluate_image(
+                rows=result.rows,
+                cols=result.cols,
+                powder_inv_d=lines,
+                angstrom_per_pixel=app,
+            )
+
+            if win:
+                win.update_eval(ev)
+
+            scores.append(ev.score)
+            n_evaluated += 1
+
+        # ── 4. Status summary ─────────────────────────────────────────
+        if n_evaluated == 0:
+            self._status_var.set(
+                'Evaluation done — no images had peak results yet. '
+                'Run peak finding first.'
+            )
+            return
+
+        mean_score = float(np.mean(scores))
+        scores_str = '  '.join(f'{s:.3f}' for s in scores)
+        self._status_var.set(
+            f'Evaluated {n_evaluated} image(s) — '
+            f'scores: [{scores_str}]  mean: {mean_score:.3f}  '
+            f'(cell: {lp.a:.3f}x{lp.b:.3f}x{lp.c:.3f} A  {lp.centering})'
+        )
 
     # ------------------------------------------------------------------
     # Entry point
